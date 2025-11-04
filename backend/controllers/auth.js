@@ -42,7 +42,7 @@ exports.login = (req, res, next) => {
        })
        .catch(error => res.status(500).json({ error }));
 };
-// test pour voir tout les users à delete
+// test pour voir tout les users à delete suprression avant mise en production
 exports.getAllu = async (_req, res) => {
   const user = await User.find();
   res.json(user);

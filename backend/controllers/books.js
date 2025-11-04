@@ -1,5 +1,6 @@
 const Book = require('../models/Book');
 const fs = require('fs');
+const path = require('path');
 
 // GET /api/books
 exports.getAll = async (_req, res) => {
@@ -11,9 +12,10 @@ exports.getAll = async (_req, res) => {
 exports.getOne = async (req, res) => {
   const book = await Book.findById(req.params.id);
   if (!book) return res.status(404).json({ message: 'Livre introuvable' });
-  res.json(book);
+  return res.json(book);
 };
 
+// POST /api/books (auth, multipart: image + book JSON string)
 exports.create = (req, res) => {
   try {
     const bookObject = JSON.parse(req.body.book);
@@ -26,16 +28,15 @@ exports.create = (req, res) => {
       imageUrl: `${req.protocol}://${req.get('host')}/images/${req.file.filename}`
     });
 
-    book.save()
+    return book.save()
       .then(() => res.status(201).json(book))
       .catch(error => res.status(400).json({ message: error.message }));
   } catch (e) {
-    res.status(400).json({ message: 'Format du champ "book" invalide' });
+    return res.status(400).json({ message: 'Format du champ "book" invalide' });
   }
 };
 
-
-// PUT /api/books/:id (auth)
+// PUT /api/books/:id (auth) — version JSON simple
 exports.update = async (req, res) => {
   try {
     const book = await Book.findById(req.params.id);
@@ -50,46 +51,45 @@ exports.update = async (req, res) => {
     book.genre = req.body.genre ?? book.genre;
 
     const saved = await book.save();
-    res.json(saved);
+    return res.json(saved);
   } catch (e) {
-    res.status(400).json({ message: e.message });
+    return res.status(400).json({ message: e.message });
   }
 };
 
-// DELETE /api/books/:id (auth)
-exports.remove = (req, res, next) => {
+// DELETE /api/books/:id (auth) — supprime aussi l'image
+exports.remove = (req, res) => {
   Book.findOne({ _id: req.params.id })
     .then(book => {
-      if (book.userId != req.auth.userId) {
-        res.status(401).json({ message: 'Not authorized' });
-      } else {
-        const filename = book.imageUrl.split('/images/')[1];
-        fs.unlink(`images/${filename}`, () => {
-          Book.deleteOne({ _id: req.params.id })
-            .then(() => { res.status(200).json({ message: 'Livre supprimé !' }) })
-            .catch(error => res.status(401).json({ error }));
-        });
+      if (!book) {
+        return res.status(404).json({ message: 'Livre introuvable' });
       }
+      if (book.userId != req.auth.userId) {
+        return res.status(401).json({ message: 'Not authorized' });
+      }
+      const filename = book.imageUrl.split('/images/')[1];
+      fs.unlink(`images/${filename}`, () => {
+        Book.deleteOne({ _id: req.params.id })
+          .then(() => res.status(200).json({ message: 'Livre supprimé !' }))
+          .catch(error => res.status(401).json({ error }));
+      });
     })
-    .catch(error => {
-      res.status(500).json({ error });
-    });
+    .catch(error => res.status(500).json({ error }));
 };
 
-// TOP 3
+// TOP 3 — GET /api/books/bestrating
 exports.getBest = async (_req, res) => {
   const top = await Book.find().sort({ averageRating: -1 }).limit(3);
   res.json(top);
 };
 
-// NOTATION
+
+// NOTATION — POST /api/books/:id/rating (auth)
 exports.rate = (req, res) => {
   const bookId = req.params.id;
 
-  // On accepte "rating" OU "grade" dans le body
+  // On accepte "rating" OU "grade"
   const grade = Number(req.body.rating != null ? req.body.rating : req.body.grade);
-
-  // Vérifs simples
   if (isNaN(grade) || grade < 0 || grade > 5) {
     return res.status(400).json({ message: 'Note invalide (0 à 5)' });
   }
@@ -97,16 +97,20 @@ exports.rate = (req, res) => {
   Book.findOne({ _id: bookId })
     .then((book) => {
       if (!book) {
-        return res.status(404).json({ message: 'Livre introuvable' });
+        res.status(404).json({ message: 'Livre introuvable' });
+        return null; // stoppe la chaîne
       }
 
       const alreadyRated = book.ratings.find((r) => r.userId === req.auth.userId);
       if (alreadyRated) {
-        return res.status(400).json({ message: 'Déjà noté par cet utilisateur' });
+        res.status(400).json({ message: 'Déjà noté par cet utilisateur' });
+        return null; // stoppe la chaîne
       }
 
-      book.ratings.push({ userId: req.auth.userId, grade: grade });
+      // ajouter la note
+      book.ratings.push({ userId: req.auth.userId, grade });
 
+      // recalculer la moyenne (arrondi au dixième)
       const total = book.ratings.reduce((acc, r) => acc + r.grade, 0);
       const avg = total / book.ratings.length;
       book.averageRating = Math.round(avg * 10) / 10;
@@ -114,9 +118,11 @@ exports.rate = (req, res) => {
       return book.save();
     })
     .then((saved) => {
-      if (saved) res.status(200).json(saved);
+      if (!saved) return;           // on a déjà répondu (404/400)
+      res.status(200).json(saved);  // réponse unique
     })
     .catch((error) => {
+      console.error(error);
       res.status(500).json({ error });
     });
 };
