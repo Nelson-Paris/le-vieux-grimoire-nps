@@ -32,6 +32,7 @@ exports.create = (req, res) => {
       .then(() => res.status(201).json(book))
       .catch(error => res.status(400).json({ message: error.message }));
   } catch (e) {
+    console.log(e)
     return res.status(400).json({ message: 'Format du champ "book" invalide' });
   }
 };
